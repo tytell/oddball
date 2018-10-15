@@ -11,7 +11,11 @@ import subprocess
 
 SETTINGS_FILE = "oddball.ini"
 
-# TODO: Add oddball classes
+oddballbeep = {'name': 'Oddball stimuli identifier', 'type': 'group', 'children': [
+        {'name': 'Note', 'type': 'str', 'value': 'A'},
+        {'name': 'Volume', 'type': 'float', 'value': 1.0, 'limits': (0., 1.0)},
+        {'name': 'Duration', 'type': 'float', 'value': 0.2, 'limits': (0., 10.0), 'suffix': 'sec'}
+    ]}
 
 parameters = [
     {'name': 'Cue image', 'type': 'str', 'value': ''},
@@ -19,6 +23,7 @@ parameters = [
 
     {'name': 'Oddball probability', 'type': 'float', 'value': 0.1,
      'limits': (0, 1)},
+    # {'name': 'Number of each type of oddball', 'type': 'int', 'value': 10, 'visible': False},
     {'name': 'Total number of oddballs', 'type': 'int', 'value': 10},
     {'name': 'Duration of cue', 'type': 'float', 'value': 0.5,
      'limits': (0, np.Inf), 'suffix': 'sec'},
@@ -50,13 +55,15 @@ parameters = [
     ]}
 ]
 
-notes = {'A': 440, 'B': 494, 'C': 523, 'D': 587, 'E': 659, 'F': 698, 'G': 784}
+NoteFrequencies = {'A': 440, 'B': 494, 'C': 523, 'D': 587, 'E': 659, 'F': 698, 'G': 784}
 
 class OddballWizard(QtWidgets.QWizard):
     def __init__(self, parent=None, parameters=None):
         super(OddballWizard, self).__init__(parent)
 
         self.oddballFiles = None
+        self.oddballTypes = None
+        self.noddballTypes = None
         self.standardFiles = None
         self.params = None
 
@@ -76,7 +83,11 @@ class OddballWizard(QtWidgets.QWizard):
         self._writeSettings()
 
         self.params = self.parametersPage.params
+
         self.oddballFiles = self.oddballPage.oddballFiles
+        self.noddballTypes = self.oddballPage.numtypes
+        self.oddballTypes = self.oddballPage.getOddballTypes()
+
         self.standardFiles = self.standardPage.standardFiles
 
         super(OddballWizard, self).done(result)
@@ -110,27 +121,75 @@ class ChooseOddballPage(QtWidgets.QWizardPage):
         self.setSubTitle('Choose the image or images that will be used for the rare ("oddball") stimulus')
 
         self.chooseButton = QtWidgets.QPushButton('Choose oddball image(s)...', parent=self)
-        self.listWidget = QtWidgets.QListWidget(parent=self)
+
+        self.tableWidget = QtWidgets.QTableWidget(parent=self)
+        self.tableWidget.setColumnCount(2)
+        self.tableWidget.setHorizontalHeaderItem(0, QtWidgets.QTableWidgetItem("File"))
+        self.tableWidget.setHorizontalHeaderItem(1, QtWidgets.QTableWidgetItem("Type"))
+        self.tableWidget.setColumnHidden(1, True)
+
+        header = self.tableWidget.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+
+        self.numberWidget = QtWidgets.QComboBox()
+        self.numberWidget.addItems(['1','2','3','4','5','6'])
+        self.numberWidget.setCurrentIndex(0)
+        self.numberWidget.currentIndexChanged.connect(self.changeNumberOfTypes)
+
+        numlab = QtWidgets.QLabel("Number of types of oddballs")
+        numlab.setAlignment(QtCore.Qt.AlignRight)
+        numlab.setBuddy(self.numberWidget)
 
         hlayout = QtWidgets.QHBoxLayout()
         hlayout.addWidget(self.chooseButton)
         hlayout.addStretch()
 
+        hlayout.addWidget(numlab)
+        hlayout.addWidget(self.numberWidget)
+
         vlayout = QtWidgets.QVBoxLayout()
         vlayout.addItem(hlayout)
-        vlayout.addWidget(self.listWidget)
+        vlayout.addWidget(self.tableWidget)
 
         self.setLayout(vlayout)
 
         self.chooseButton.clicked.connect(self.chooseOddballs)
 
+        self.registerField("numberOfTypesIndex", self.numberWidget)
+
     def chooseOddballs(self):
         oddballFiles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "Choose oddball file(s)",
                                                               filter="Images (*.png *.jpg *.gif)")
         if oddballFiles is not None:
-            self.listWidget.clear()
-            self.listWidget.addItems(oddballFiles)
+            self.tableWidget.clear()
+            self.tableWidget.setRowCount(len(oddballFiles))
+            for r, file1 in enumerate(oddballFiles):
+                self.tableWidget.setItem(r, 0, QtWidgets.QTableWidgetItem(file1))
+                self.tableWidget.setItem(r, 1, QtWidgets.QTableWidgetItem('1'))
             self.oddballFiles = oddballFiles
+
+    def changeNumberOfTypes(self, comboindex:int):
+        if comboindex == 0:
+            self.tableWidget.setColumnHidden(1, True)
+            self.numtypes = 1
+        else:
+            self.tableWidget.setColumnHidden(1, False)
+            self.numtypes = comboindex + 1
+
+    def getOddballTypes(self):
+        if self.numtypes == 1:
+            return [1] * len(self.oddballFiles)
+        else:
+            oddballTypes = []
+            for row in range(self.tableWidget.rowCount()):
+                twi = self.tableWidget.item(row, 1)
+                try:
+                    oddballTypes.append(int(twi.text()))
+                except TypeError:
+                    oddballTypes.append(1)
+
+            return oddballTypes
 
 class ChooseStandardPage(QtWidgets.QWizardPage):
     def __init__(self, parent=None):
@@ -176,6 +235,8 @@ class ParametersPage(QtWidgets.QWizardPage):
         self.paramtree = ParameterTree()
         self.paramtree.setParameters(self.params, showTop=False)
 
+        self.ntypes = 1
+
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(self.paramtree)
 
@@ -191,6 +252,56 @@ class ParametersPage(QtWidgets.QWizardPage):
         self._readParameters(settings, self.params)
 
         settings.endGroup()
+
+        logging.debug('more types! {}'.format(self.field("numberOfTypesIndex")))
+        if self.field("numberOfTypesIndex")+1 != self.ntypes:
+            oldntypes = self.ntypes
+            self.ntypes = self.field("numberOfTypesIndex") + 1
+
+            # if self.ntypes == 1:
+            #     try:
+            #         self.params.child('Number of each type of oddball').hide()
+            #     except TypeError:
+            #         # there's a bug in pyqtgraph so that this throws an exception, even though it actually works
+            #         pass
+            #     self.params.child('Number of each type of oddball').sigValueChanged.disconnect(self.updateTotalOddballs)
+            #     self.params.child['Number of each type of oddball'] = 1
+            #     try:
+            #         self.params.child("Total number of oddballs").setWritable()
+            #     except TypeError:
+            #         # there's a bug in pyqtgraph so that this throws an exception, even though it actually works
+            #         pass
+            # else:
+            #     try:
+            #         self.params.child('Number of each type of oddball').show()
+            #     except TypeError:
+            #         # there's a bug in pyqtgraph so that this throws an exception, even though it actually works
+            #         pass
+            #     self.params.child('Number of each type of oddball').sigValueChanged.connect(self.updateTotalOddballs)
+            #     try:
+            #         self.params.child("Total number of oddballs").setReadonly()
+            #     except TypeError:
+            #         # there's a bug in pyqtgraph so that this throws an exception, even though it actually works
+            #         pass
+
+            if oldntypes > self.ntypes:
+                for i in range(self.ntypes, oldntypes):
+                    nm1 = "Oddball type {}".format(i + 1)
+                    self.params.child(nm1).remove()
+
+                if self.ntypes == 1:
+                    self.params.child("Oddball type 1").setName("Oddball stimuli identifier")
+            else:
+                if oldntypes == 1:
+                    self.params.child("Oddball stimuli identifier").remove()
+                    startnew = 0
+                else:
+                    startnew = oldntypes
+
+                next = self.params.child("Internals")
+                for i in range(startnew, self.ntypes):
+                    oddballbeep['name'] = "Oddball type {}".format(i + 1)
+                    self.params.insertChild(next, oddballbeep)
 
     def chooseCueImage(self):
         cueFile = self.params['Cue image']
@@ -210,7 +321,14 @@ class ParametersPage(QtWidgets.QWizardPage):
         if scratchDir:
             self.params['Internals', 'Scratch directory'] = scratchDir
 
+    def updateTotalOddballs(self, val):
+        self.params["Total number of oddballs"] = self.ntypes * self.params["Number of each type of oddball"]
+
     def validatePage(self):
+        if not os.path.exists(self.params['Cue image']):
+            QtWidgets.QMessageBox.warning(self, "Error", "Cue image file does not exist. Please select it again")
+            return False
+
         settings = QtCore.QSettings(SETTINGS_FILE, QtCore.QSettings.IniFormat)
         settings.beginGroup("Parameters")
 
@@ -254,14 +372,44 @@ class ParametersPage(QtWidgets.QWizardPage):
 
 
 def gcd(a, b, tol=1e-10):
-    ''' Greatest common divisor algorithm from Wikipedia.
+    """ Greatest common divisor algorithm from Wikipedia.
     https://en.wikipedia.org/wiki/Euclidean_algorithm
-    '''
+    """
     while (b > tol) and (abs(b - a) > tol):
         t = b
         b = a % b
         a = t
     return a
+
+
+def scale_image(qim, width, height):
+    imout = QtGui.QImage(width, height, qim.format())
+    imout.fill(QtGui.QColor(255, 255, 255))
+
+    arin = qim.width() / qim.height()
+    arout = width / height
+
+    if arout > arin:
+        scale = height / qim.height()
+        scalewidth = qim.width() * scale
+        scaleheight = height
+    else:
+        scale = width / qim.width()
+        scaleheight = qim.height() * scale
+        scalewidth = width
+
+    qim = qim.scaled(scalewidth, scaleheight,
+                     QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
+
+    offsetx = (width - scalewidth)/2.0
+    offsety = (height - scaleheight)/2.0
+
+    painter = QtGui.QPainter()
+    painter.begin(imout)
+    painter.drawImage(offsetx, offsety, qim)
+    painter.end()
+
+    return imout
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
@@ -273,14 +421,14 @@ def main():
     _, framefmt = os.path.splitext(wizard.params['Internals', 'Frame name'])
 
     # convert image files to the right size and format
-    # TODO: Figure out how to scale images correctly without changing aspect ratio
     file = wizard.params['Cue image']
+    if not os.path.exists(file):
+        raise IOError('File {} not found'.format(file))
+
     qim = QtGui.QImage(file)
 
-    if qim.width() != wizard.params['Internals', 'Image width'] or \
-                    qim.height() != wizard.params['Internals', 'Image height']:
-        qim = qim.scaled(wizard.params['Internals', 'Image width'], wizard.params['Internals', 'Image height'],
-                         QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
+    logging.debug('qim.width = {}; qim.height = {}'.format(qim.width(), qim.height()))
+    qim = scale_image(qim, wizard.params['Internals', 'Image width'], wizard.params['Internals', 'Image height'])
 
     _, fn = os.path.split(file)
     fn, _ = os.path.splitext(fn)
@@ -289,14 +437,13 @@ def main():
 
     oddfiles = []
     for file in wizard.oddballFiles:
+        if not os.path.exists(file):
+            raise IOError('File {} not found'.format(file))
         qim = QtGui.QImage(file)
 
-        if qim.width() != wizard.params['Internals', 'Image width'] or \
-                        qim.height() != wizard.params['Internals', 'Image height']:
-            logging.debug('Qim.size before = {}'.format(qim.size()))
-            qim = qim.scaled(wizard.params['Internals', 'Image width'], wizard.params['Internals', 'Image height'],
-                             QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
-            logging.debug('Qim.size = {}'.format(qim.size()))
+        logging.debug('Qim.size before = {}'.format(qim.size()))
+        qim = scale_image(qim, wizard.params['Internals', 'Image width'], wizard.params['Internals', 'Image height'])
+        logging.debug('Qim.size = {}'.format(qim.size()))
 
         _, fn = os.path.split(file)
         fn, _ = os.path.splitext(fn)
@@ -308,11 +455,7 @@ def main():
     stdfiles = []
     for file in wizard.standardFiles:
         qim = QtGui.QImage(file)
-
-        if qim.width() != wizard.params['Internals', 'Image width'] or \
-                        qim.height() != wizard.params['Internals', 'Image height']:
-            qim = qim.scaled(wizard.params['Internals', 'Image width'], wizard.params['Internals', 'Image height'],
-                             QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
+        qim = scale_image(qim, wizard.params['Internals', 'Image width'], wizard.params['Internals', 'Image height'])
 
         _, fn = os.path.split(file)
         fn, _ = os.path.splitext(fn)
@@ -331,6 +474,8 @@ def main():
     basefps = 1.0 / mindur
 
     nodd = wizard.params['Total number of oddballs']
+    noddtypes = wizard.noddballTypes
+    noddpertype = nodd / noddtypes
 
     ntotal = int(np.ceil(nodd / wizard.params['Oddball probability']))
     nstandard = ntotal - nodd
@@ -340,13 +485,19 @@ def main():
     oddfiles *= int(np.ceil(nodd / len(wizard.oddballFiles)))
     oddfiles = oddfiles[:nodd]
 
+    oddtypes = wizard.oddballTypes
+    oddtypes *= int(np.ceil(nodd / len(wizard.oddballFiles)))
+    oddtypes = oddtypes[:nodd]
+
     stdfiles *= int(np.ceil(nstandard / len(wizard.standardFiles)))
     stdfiles = stdfiles[:nstandard]
 
     files = oddfiles + stdfiles
     files = np.array(files)
     tstim = cuedur + np.arange(0, ntotal)*(cuedur + stimdur)
-    stimtype = np.concatenate((np.ones((nodd,), dtype=np.int), np.zeros((nstandard,), dtype=np.int)))
+
+    stimtype = np.concatenate((np.array(oddtypes, dtype=np.int),
+                               np.zeros((nstandard,), dtype=np.int)))
 
     framename = os.path.join(wizard.params['Internals', 'Scratch directory'],
                               wizard.params['Internals', 'Frame name'])
@@ -375,16 +526,21 @@ def main():
     sounddata = np.zeros((naudiosamp,), dtype=np.int16)
 
     idstd = wizard.params.child('Standard stimuli identifier')
-    idodd = wizard.params.child('Oddball stimuli identifier')
+
+    if noddtypes == 1:
+        idodd = [wizard.params.child('Oddball stimuli identifier'), ]
+    else:
+        idodd = [wizard.params.child("Oddball type {}".format(i + 1)) for i in range(noddtypes)]
+
+    durs = [idstd['Duration']] + [x['Duration'] for x in idodd]
+    notes = [idstd['Note']] + [x['Note'] for x in idodd]
+    volumes = [idstd['Volume']] + [x['Volume'] for x in idodd]
 
     beep = []
-    for dur, note, vol in zip([idstd['Duration'], idodd['Duration']],
-                              [idstd['Note'], idodd['Note']],
-                              [idstd['Volume'], idodd['Volume']]):
-
+    for dur, note, vol in zip(durs, notes, volumes):
         tbeep = np.arange(0, int(np.ceil(dur * audiofreq)), dtype=np.int16) / audiofreq
         try:
-            beepfreq = notes[note]
+            beepfreq = NoteFrequencies[note]
         except KeyError:
             beepfreq = 440
         beep1 = 32767.0 * vol * np.sin(2*np.pi * beepfreq * tbeep)
@@ -417,7 +573,7 @@ def main():
     try:
         subprocess.run(['ffmpeg', '-r', str(basefps), '-i', framename,
                         '-i', soundfilename, '-c:v', 'libx264', '-crf', '23', '-r', '30',
-                        '-c:a', 'aac', '-b:a', '192k', 'oddball.mp4'],
+                        '-c:a', 'aac', '-b:a', '192k', outfilename],
                        check=True)
     except subprocess.CalledProcessError as err:
         logging.debug(err)
