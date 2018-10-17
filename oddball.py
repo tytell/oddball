@@ -18,13 +18,18 @@ oddballbeep = {'name': 'Oddball stimuli identifier', 'type': 'group', 'children'
     ]}
 
 parameters = [
+    {'name': 'Instructions image', 'type': 'str', 'value': ''},
+    {'name': 'Choose instructions image...', 'type': 'action'},
+    {'name': 'Instructions duration', 'type': 'float', 'value': 2, 'limits': (0, np.Inf), 'suffix': 'sec'},
+
     {'name': 'Cue image', 'type': 'str', 'value': ''},
     {'name': 'Choose cue image...', 'type': 'action'},
 
     {'name': 'Oddball probability', 'type': 'float', 'value': 0.1,
      'limits': (0, 1)},
     # {'name': 'Number of each type of oddball', 'type': 'int', 'value': 10, 'visible': False},
-    {'name': 'Total number of oddballs', 'type': 'int', 'value': 10},
+    {'name': 'Total number of oddballs per movie', 'type': 'int', 'value': 10},
+    {'name': 'Number of movies to make', 'type': 'int', 'value': 1},
     {'name': 'Duration of cue', 'type': 'float', 'value': 0.5,
      'limits': (0, np.Inf), 'suffix': 'sec'},
     {'name': 'Duration of stimulus', 'type': 'float', 'value': 0.2,
@@ -124,7 +129,7 @@ class ChooseOddballPage(QtWidgets.QWizardPage):
 
         self.tableWidget = QtWidgets.QTableWidget(parent=self)
         self.tableWidget.setColumnCount(2)
-        self.tableWidget.setHorizontalHeaderItem(0, QtWidgets.QTableWidgetItem("File"))
+        self.tableWidget.setHorizontalHeaderItem(0, QtWidgets.QTableWidgetItem("Filename"))
         self.tableWidget.setHorizontalHeaderItem(1, QtWidgets.QTableWidgetItem("Type"))
         self.tableWidget.setColumnHidden(1, True)
 
@@ -169,6 +174,9 @@ class ChooseOddballPage(QtWidgets.QWizardPage):
                 self.tableWidget.setItem(r, 1, QtWidgets.QTableWidgetItem('1'))
             self.oddballFiles = oddballFiles
 
+            self.tableWidget.setHorizontalHeaderItem(0, QtWidgets.QTableWidgetItem("Filename"))
+            self.tableWidget.setHorizontalHeaderItem(1, QtWidgets.QTableWidgetItem("Type"))
+
     def changeNumberOfTypes(self, comboindex:int):
         if comboindex == 0:
             self.tableWidget.setColumnHidden(1, True)
@@ -176,6 +184,9 @@ class ChooseOddballPage(QtWidgets.QWizardPage):
         else:
             self.tableWidget.setColumnHidden(1, False)
             self.numtypes = comboindex + 1
+
+            self.tableWidget.setHorizontalHeaderItem(0, QtWidgets.QTableWidgetItem("Filename"))
+            self.tableWidget.setHorizontalHeaderItem(1, QtWidgets.QTableWidgetItem("Type"))
 
     def getOddballTypes(self):
         if self.numtypes == 1:
@@ -190,6 +201,23 @@ class ChooseOddballPage(QtWidgets.QWizardPage):
                     oddballTypes.append(1)
 
             return oddballTypes
+
+    def validatePage(self):
+        if self.numtypes > 1:
+            oddballtypes = self.getOddballTypes()
+
+            oddballtypes = set(oddballtypes)
+            alltypes = set(range(1, self.numtypes+1))
+
+            if len(alltypes - oddballtypes) > 0:
+                ret = QtWidgets.QMessageBox.question(self, "Warning",
+                                                      "You selected {} oddball types but only {} are in the table. "
+                                                      "Is this what you meant?".format(self.numtypes, len(oddballtypes)),
+                                                      QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+                return ret == QtWidgets.QMessageBox.Yes
+
+        return True
+
 
 class ChooseStandardPage(QtWidgets.QWizardPage):
     def __init__(self, parent=None):
@@ -240,6 +268,7 @@ class ParametersPage(QtWidgets.QWizardPage):
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(self.paramtree)
 
+        self.params.child('Choose instructions image...').sigActivated.connect(self.chooseInstructionsImage)
         self.params.child('Choose cue image...').sigActivated.connect(self.chooseCueImage)
         self.params.child('Internals', 'Choose scratch directory...').sigActivated.connect(self.chooseScratchDirectory)
 
@@ -303,6 +332,15 @@ class ParametersPage(QtWidgets.QWizardPage):
                     oddballbeep['name'] = "Oddball type {}".format(i + 1)
                     self.params.insertChild(next, oddballbeep)
 
+    def chooseInstructionsImage(self):
+        instrFile = self.params['Cue image']
+        if not instrFile:
+            instrFile = ""
+        instrFile, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose output file", directory=instrFile,
+                                                              filter="Images (*.png *.jpg *.gif)")
+        if instrFile:
+            self.params['Instructions image'] = instrFile
+
     def chooseCueImage(self):
         cueFile = self.params['Cue image']
         if not cueFile:
@@ -322,11 +360,23 @@ class ParametersPage(QtWidgets.QWizardPage):
             self.params['Internals', 'Scratch directory'] = scratchDir
 
     def updateTotalOddballs(self, val):
-        self.params["Total number of oddballs"] = self.ntypes * self.params["Number of each type of oddball"]
+        self.params["Total number of oddballs per movie"] = self.ntypes * self.params["Number of each type of oddball"]
 
     def validatePage(self):
         if not os.path.exists(self.params['Cue image']):
             QtWidgets.QMessageBox.warning(self, "Error", "Cue image file does not exist. Please select it again")
+            return False
+
+        if not os.path.exists(self.params['Instructions image']):
+            QtWidgets.QMessageBox.warning(self, "Error", "Instructions image file does not exist. Please select it again")
+            return False
+
+        if not os.path.exists(self.params['Instructions image']):
+            QtWidgets.QMessageBox.warning(self, "Error", "Instructions image file does not exist. Please select it again")
+            return False
+
+        if not os.path.exists(self.params['Internals', 'Scratch directory']):
+            QtWidgets.QMessageBox.warning(self, "Error", "Scratch directory does not exist. Please select it again")
             return False
 
         settings = QtCore.QSettings(SETTINGS_FILE, QtCore.QSettings.IniFormat)
@@ -421,19 +471,24 @@ def main():
     _, framefmt = os.path.splitext(wizard.params['Internals', 'Frame name'])
 
     # convert image files to the right size and format
-    file = wizard.params['Cue image']
-    if not os.path.exists(file):
-        raise IOError('File {} not found'.format(file))
+    instrcue = []
+    for file in [wizard.params['Instructions image'], wizard.params['Cue image']]:
+        if not os.path.exists(file):
+            raise IOError('File {} not found'.format(file))
 
-    qim = QtGui.QImage(file)
+        qim = QtGui.QImage(file)
 
-    logging.debug('qim.width = {}; qim.height = {}'.format(qim.width(), qim.height()))
-    qim = scale_image(qim, wizard.params['Internals', 'Image width'], wizard.params['Internals', 'Image height'])
+        logging.debug('qim.width = {}; qim.height = {}'.format(qim.width(), qim.height()))
+        qim = scale_image(qim, wizard.params['Internals', 'Image width'], wizard.params['Internals', 'Image height'])
 
-    _, fn = os.path.split(file)
-    fn, _ = os.path.splitext(fn)
-    cuefile = os.path.join(wizard.params['Internals', 'Scratch directory'], fn + framefmt)
-    qim.save(cuefile)
+        _, fn = os.path.split(file)
+        fn, _ = os.path.splitext(fn)
+        fn1 = os.path.join(wizard.params['Internals', 'Scratch directory'], fn + framefmt)
+        qim.save(fn1)
+
+        instrcue.append(fn1)
+
+    instructionsfile, cuefile = instrcue
 
     oddfiles = []
     for file in wizard.oddballFiles:
@@ -464,23 +519,26 @@ def main():
 
         stdfiles.append(outfilename)
 
+    instructionsdur = wizard.params['Instructions duration']
+
     cuedur = wizard.params['Duration of cue']
     stimdur = wizard.params['Duration of stimulus']
     mindur = gcd(cuedur, stimdur)
 
+    instrframes = int(instructionsdur / mindur)
     cueframes = int(cuedur / mindur)
     stimframes = int(stimdur / mindur)
 
     basefps = 1.0 / mindur
 
-    nodd = wizard.params['Total number of oddballs']
+    nodd = wizard.params['Total number of oddballs per movie']
     noddtypes = wizard.noddballTypes
     noddpertype = nodd / noddtypes
 
     ntotal = int(np.ceil(nodd / wizard.params['Oddball probability']))
     nstandard = ntotal - nodd
 
-    totaldur = ntotal * (cuedur + stimdur)
+    totaldur = instructionsdur + ntotal * (cuedur + stimdur)
 
     oddfiles *= int(np.ceil(nodd / len(wizard.oddballFiles)))
     oddfiles = oddfiles[:nodd]
@@ -492,94 +550,120 @@ def main():
     stdfiles *= int(np.ceil(nstandard / len(wizard.standardFiles)))
     stdfiles = stdfiles[:nstandard]
 
-    files = oddfiles + stdfiles
-    files = np.array(files)
-    tstim = cuedur + np.arange(0, ntotal)*(cuedur + stimdur)
+    files0 = oddfiles + stdfiles
+    files0 = np.array(files0)
+    tstim = instructionsdur + cuedur + np.arange(0, ntotal)*(cuedur + stimdur)
 
-    stimtype = np.concatenate((np.array(oddtypes, dtype=np.int),
+    stimtype0 = np.concatenate((np.array(oddtypes, dtype=np.int),
                                np.zeros((nstandard,), dtype=np.int)))
 
     framename = os.path.join(wizard.params['Internals', 'Scratch directory'],
                               wizard.params['Internals', 'Frame name'])
 
-    # shuffle the order of the files
-    ord = np.random.permutation(ntotal)
-    files = files[ord]
-    stimtype = stimtype[ord]
-
-    k = 1
-    for file in files:
-        for f, nfr in zip([cuefile, file], [cueframes, stimframes]):
-            for rep in range(nfr):
-                fn = framename % k
-
-                if os.path.exists(fn):
-                    os.unlink(fn)
-                shutil.copyfile(f, fn)
-
-                k += 1
-
-    # generate .wav file
-    audiofreq = wizard.params['Internals', 'Audio rate']
-    naudiosamp = int(np.ceil(totaldur * audiofreq))
-
-    sounddata = np.zeros((naudiosamp,), dtype=np.int16)
-
-    idstd = wizard.params.child('Standard stimuli identifier')
-
-    if noddtypes == 1:
-        idodd = [wizard.params.child('Oddball stimuli identifier'), ]
-    else:
-        idodd = [wizard.params.child("Oddball type {}".format(i + 1)) for i in range(noddtypes)]
-
-    durs = [idstd['Duration']] + [x['Duration'] for x in idodd]
-    notes = [idstd['Note']] + [x['Note'] for x in idodd]
-    volumes = [idstd['Volume']] + [x['Volume'] for x in idodd]
-
-    beep = []
-    for dur, note, vol in zip(durs, notes, volumes):
-        tbeep = np.arange(0, int(np.ceil(dur * audiofreq)), dtype=np.int16) / audiofreq
-        try:
-            beepfreq = NoteFrequencies[note]
-        except KeyError:
-            beepfreq = 440
-        beep1 = 32767.0 * vol * np.sin(2*np.pi * beepfreq * tbeep)
-        beep.append(beep1.astype(np.int16))
-
-    for t1, stimtype1 in zip(tstim, stimtype):
-        beep1 = beep[stimtype1]
-
-        ind1 = int(np.round(t1 * audiofreq))
-        k = ind1 + np.arange(len(beep1))
-
-        sounddata[k] = beep1
-
-    soundfilename = os.path.join(wizard.params['Internals', 'Scratch directory'], 'id.wav')
-    with wave.open(soundfilename, 'wb') as wav:
-        wav.setframerate(audiofreq)
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.writeframes(sounddata)
-
     pn, _ = os.path.split(wizard.oddballFiles[0])
     outfilename, _ = QtWidgets.QFileDialog.getSaveFileName(None, "Choose output file", directory=pn,
-                                                          filter="Video (*.mp4)")
+                                                           filter="Video (*.mp4)")
     if outfilename is None:
         return 0
 
-    if os.path.exists(outfilename):
-        os.unlink(outfilename)
+    outfilebase, outfileext = os.path.splitext(outfilename)
 
-    try:
-        subprocess.run(['ffmpeg', '-r', str(basefps), '-i', framename,
-                        '-i', soundfilename, '-c:v', 'libx264', '-crf', '23', '-r', '30',
-                        '-c:a', 'aac', '-b:a', '192k', outfilename],
-                       check=True)
-    except subprocess.CalledProcessError as err:
-        logging.debug(err)
+    # shuffle the order of the files
+    errors = []
+
+    nreps = wizard.params['Number of movies to make']
+    for rep in range(nreps):
+        ord = np.random.permutation(ntotal)
+        files = files0[ord]
+        stimtype = stimtype0[ord]
+
+        k = 1
+        for fr in range(instrframes):
+            fn = framename % k
+
+            if os.path.exists(fn):
+                os.unlink(fn)
+            shutil.copyfile(instructionsfile, fn)
+
+            k += 1
+
+        for file in files:
+            for f, nfr in zip([cuefile, file], [cueframes, stimframes]):
+                for fr in range(nfr):
+                    fn = framename % k
+
+                    if os.path.exists(fn):
+                        os.unlink(fn)
+                    shutil.copyfile(f, fn)
+
+                    k += 1
+
+        # generate .wav file
+        audiofreq = wizard.params['Internals', 'Audio rate']
+        naudiosamp = int(np.ceil(totaldur * audiofreq))
+
+        sounddata = np.zeros((naudiosamp,), dtype=np.int16)
+
+        idstd = wizard.params.child('Standard stimuli identifier')
+
+        if noddtypes == 1:
+            idodd = [wizard.params.child('Oddball stimuli identifier'), ]
+        else:
+            idodd = [wizard.params.child("Oddball type {}".format(i + 1)) for i in range(noddtypes)]
+
+        durs = [idstd['Duration']] + [x['Duration'] for x in idodd]
+        notes = [idstd['Note']] + [x['Note'] for x in idodd]
+        volumes = [idstd['Volume']] + [x['Volume'] for x in idodd]
+
+        beep = []
+        for dur, note, vol in zip(durs, notes, volumes):
+            tbeep = np.arange(0, int(np.ceil(dur * audiofreq)), dtype=np.int16) / audiofreq
+            try:
+                beepfreq = NoteFrequencies[note]
+            except KeyError:
+                beepfreq = 440
+            beep1 = 32767.0 * vol * np.sin(2*np.pi * beepfreq * tbeep)
+            beep.append(beep1.astype(np.int16))
+
+        for t1, stimtype1 in zip(tstim, stimtype):
+            beep1 = beep[stimtype1]
+
+            ind1 = int(np.round(t1 * audiofreq))
+            k = ind1 + np.arange(len(beep1))
+
+            try:
+                sounddata[k] = beep1
+            except IndexError:
+                pass
+
+        soundfilename = os.path.join(wizard.params['Internals', 'Scratch directory'], 'id.wav')
+        with wave.open(soundfilename, 'wb') as wav:
+            wav.setframerate(audiofreq)
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.writeframes(sounddata)
+
+        if nreps > 1:
+            outfilename1 = '{}{:02d}{}'.format(outfilebase, rep+1, outfileext)
+        else:
+            outfilename1 = outfilename
+
+        if os.path.exists(outfilename1):
+            os.unlink(outfilename1)
+
+        try:
+            subprocess.run(['ffmpeg', '-r', str(basefps), '-i', framename,
+                            '-i', soundfilename, '-crf', '23', '-r', '30',
+                            '-c:a', 'aac', '-b:a', '192k', outfilename1],
+                           check=True)
+        except subprocess.CalledProcessError as err:
+            logging.debug(err)
+            errors.append(err)
+
+    if len(errors) > 0:
         return 1
-
-    return 0
+    else:
+        return 0
 
 if __name__ == '__main__':
     sys.exit(main())
