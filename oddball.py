@@ -121,6 +121,7 @@ class ChooseOddballPage(QtWidgets.QWizardPage):
         super(ChooseOddballPage, self).__init__(parent)
 
         self.oddballFiles = None
+        self.numtypes = 1
 
         self.setTitle('Choose oddball images')
         self.setSubTitle('Choose the image or images that will be used for the rare ("oddball") stimulus')
